@@ -1,8 +1,9 @@
 
-import { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { GameState, Player } from '@/lib/gameTypes';
 import { toast } from '@/hooks/use-toast';
+import MockGameServer from '@/lib/mockGameServer';
 
 // Define message types for WebSocket communication
 export interface GameMessage {
@@ -13,38 +14,59 @@ export interface GameMessage {
   playerId?: string;
 }
 
-// This would be replaced with your actual backend URL in production
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws';
-
 export function useGameConnection() {
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  const gameId = searchParams.get('id');
+  const mockServer = useRef(MockGameServer.getInstance());
   const navigate = useNavigate();
-
-  // Initialize WebSocket connection
+  
+  // Initialize player ID from local storage or generate new one
   useEffect(() => {
-    // For demonstration purposes, generate a random player ID
-    // In a real app, this would come from authentication
-    if (!playerId) {
-      setPlayerId(`player-${Math.floor(Math.random() * 1000)}`);
+    // Try to get existing player ID from localStorage
+    const storedPlayerId = localStorage.getItem('playerId');
+    if (storedPlayerId) {
+      setPlayerId(storedPlayerId);
+    } else {
+      // Generate a new player ID
+      const newPlayerId = `player-${Math.floor(Math.random() * 10000)}`;
+      localStorage.setItem('playerId', newPlayerId);
+      setPlayerId(newPlayerId);
     }
-    
-    return () => {
-      // Clean up socket on unmount
-      if (socket) {
-        socket.close();
-      }
-    };
   }, []);
 
   // Connect to game server
   const connect = useCallback(() => {
-    if (socket) return; // Already connected
+    if (socket || !playerId) return; // Already connected or no player ID
 
     try {
-      const ws = new WebSocket(WS_URL);
+      // Use our mock server instead of a real WebSocket connection
+      const ws = mockServer.current.connect(playerId, (message: string) => {
+        // This is the message handler that will be called by the mock server
+        try {
+          const parsedMessage = JSON.parse(message);
+          
+          switch (parsedMessage.type) {
+            case 'GAME_STATE':
+              setGameState(parsedMessage.payload as GameState);
+              break;
+            case 'ERROR':
+              toast({
+                title: "Game Error",
+                description: parsedMessage.payload.message,
+                variant: "destructive"
+              });
+              break;
+            default:
+              console.log('Received message:', parsedMessage);
+          }
+        } catch (err) {
+          console.error('Error parsing message:', err);
+        }
+      });
       
       ws.onopen = () => {
         setSocket(ws);
@@ -53,31 +75,12 @@ export function useGameConnection() {
           title: "Connected",
           description: "Successfully connected to game server",
         });
-      };
-      
-      ws.onmessage = (event) => {
-        try {
-          const message: GameMessage = JSON.parse(event.data);
-          
-          switch (message.type) {
-            case 'GAME_STATE':
-              setGameState(message.payload as GameState);
-              break;
-            case 'ERROR':
-              toast({
-                title: "Game Error",
-                description: message.payload.message,
-                variant: "destructive"
-              });
-              break;
-            case 'GAME_END':
-              // Handle game end if needed
-              break;
-            default:
-              console.log('Received message:', message);
-          }
-        } catch (err) {
-          console.error('Error parsing message:', err);
+        
+        // If we have a game ID in URL, join that game
+        if (gameId) {
+          // Get player name from localStorage or use a default
+          const playerName = localStorage.getItem('playerName') || 'Player ' + playerId.substring(7);
+          sendMessage('JOIN_GAME', { gameId, playerName });
         }
       };
       
@@ -99,17 +102,26 @@ export function useGameConnection() {
           variant: "destructive"
         });
       };
-      
-      return ws;
     } catch (err) {
       console.error('Failed to connect:', err);
-      return null;
     }
-  }, [socket, playerId]);
+  }, [socket, playerId, gameId]);
+
+  // Auto-reconnect logic
+  useEffect(() => {
+    const reconnectInterval = setInterval(() => {
+      if (!connected && playerId) {
+        console.log('Attempting to reconnect...');
+        connect();
+      }
+    }, 5000); // Try to reconnect every 5 seconds
+    
+    return () => clearInterval(reconnectInterval);
+  }, [connected, playerId, connect]);
 
   // Send message to server
-  const sendMessage = useCallback((type: GameMessage['type'], payload: any = {}, gameId?: string) => {
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
+  const sendMessage = useCallback((type: GameMessage['type'], payload: any = {}, gameIdOverride?: string) => {
+    if (!socket) {
       toast({
         title: "Not Connected",
         description: "Please wait for connection to be established",
@@ -121,16 +133,19 @@ export function useGameConnection() {
     const message: GameMessage = {
       type,
       payload,
-      gameId,
+      gameId: gameIdOverride || gameId || undefined,
       playerId
     };
     
     socket.send(JSON.stringify(message));
     return true;
-  }, [socket, playerId]);
+  }, [socket, playerId, gameId]);
 
   // Join a game room
   const joinGame = useCallback((gameId: string, playerName: string) => {
+    // Store player name for reconnections
+    localStorage.setItem('playerName', playerName);
+    
     const success = sendMessage('JOIN_GAME', { gameId, playerName });
     if (success) {
       navigate(`/game?id=${gameId}`);
@@ -140,6 +155,9 @@ export function useGameConnection() {
 
   // Create a new game room
   const createGame = useCallback((playerName: string) => {
+    // Store player name for reconnections
+    localStorage.setItem('playerName', playerName);
+    
     const gameId = `game-${Math.random().toString(36).substring(2, 9)}`;
     const success = sendMessage('JOIN_GAME', { gameId, playerName, isCreator: true });
     if (success) {
@@ -151,19 +169,19 @@ export function useGameConnection() {
   // Set player ready status
   const setReady = useCallback((ready: boolean) => {
     if (!gameState) return false;
-    return sendMessage('PLAYER_READY', { ready }, gameState.gameId);
+    return sendMessage('PLAYER_READY', { ready });
   }, [sendMessage, gameState]);
 
   // Make a guess (for Sipahi)
   const makeGuess = useCallback((targetPlayerId: string) => {
     if (!gameState) return false;
-    return sendMessage('MAKE_GUESS', { targetPlayerId }, gameState.gameId);
+    return sendMessage('MAKE_GUESS', { targetPlayerId });
   }, [sendMessage, gameState]);
 
   // Start the game (for room creator)
   const startGame = useCallback(() => {
     if (!gameState) return false;
-    return sendMessage('START_GAME', {}, gameState.gameId);
+    return sendMessage('START_GAME', {});
   }, [sendMessage, gameState]);
 
   return {
@@ -178,4 +196,3 @@ export function useGameConnection() {
     startGame
   };
 }
-

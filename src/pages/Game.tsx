@@ -1,9 +1,10 @@
-
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import Navbar from '@/components/Navbar';
 import RoleCard from '@/components/RoleCard';
+import ConnectionStatus from '@/components/ConnectionStatus';
+import ShareGame from '@/components/ShareGame';
 import TransitionEffect from '@/components/TransitionEffect';
 import { Button } from '@/components/ui/button';
 import { GameRole, GameState, Player, ROLE_POINTS } from '@/lib/gameTypes';
@@ -27,14 +28,12 @@ const Game: React.FC = () => {
     startGame
   } = useGameConnection();
   
-  // Connect to WebSocket when component mounts
   useEffect(() => {
     if (!connected) {
       connect();
     }
   }, [connect, connected]);
   
-  // Show toast if no game ID was provided
   useEffect(() => {
     if (!gameId) {
       toast({
@@ -45,13 +44,11 @@ const Game: React.FC = () => {
     }
   }, [gameId]);
   
-  // Handle role reveal animation
   useEffect(() => {
     if (gameState?.status === 'revealing-roles') {
       setShowRoleReveal(true);
       setCountdown(5);
       
-      // Count down
       const timer = setInterval(() => {
         setCountdown((prev) => {
           if (prev === null || prev <= 1) {
@@ -68,34 +65,28 @@ const Game: React.FC = () => {
     }
   }, [gameState?.status]);
   
-  // Get current player from game state
   const currentPlayer = gameState?.players.find(player => player.id === playerId);
   
-  // Handle player selection for guessing
   const handlePlayerSelect = (targetPlayerId: string) => {
     if (gameState?.status !== 'making-guess' || currentPlayer?.role !== 'Sipahi') return;
     setSelectedPlayer(targetPlayerId);
   };
   
-  // Handle submitting a guess
   const handleSubmitGuess = () => {
     if (!selectedPlayer || !gameState || currentPlayer?.role !== 'Sipahi') return;
     makeGuess(selectedPlayer);
     setSelectedPlayer(null);
   };
   
-  // Handle ready button click
   const handleReady = () => {
     if (!currentPlayer) return;
     setReady(!currentPlayer.isReady);
   };
   
-  // Handle start game button click
   const handleStartGame = () => {
     startGame();
   };
   
-  // If no game state yet, show loading
   if (!gameState) {
     return (
       <TransitionEffect>
@@ -122,13 +113,16 @@ const Game: React.FC = () => {
     );
   }
   
-  // Render different views based on game state
   const renderGameContent = () => {
     switch (gameState.status) {
       case 'waiting':
         return (
           <div className="text-center">
             <h2 className="text-2xl font-bold mb-6">Waiting for Players</h2>
+            
+            {gameState.players.length < 4 && (
+              <ShareGame gameId={gameState.gameId} className="mb-8" />
+            )}
             
             <div className="glass p-6 rounded-xl mb-8">
               <h3 className="text-xl font-medium mb-4">Players</h3>
@@ -144,13 +138,19 @@ const Game: React.FC = () => {
                       <p className="font-medium">
                         {player.name} {player.id === playerId ? '(You)' : ''}
                       </p>
-                      <span className={`text-sm px-2 py-1 rounded-full ${
-                        player.isReady 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-gray-100 text-gray-800'
-                      }`}>
-                        {player.isReady ? 'Ready' : 'Not Ready'}
-                      </span>
+                      <div className="flex items-center space-x-2">
+                        <ConnectionStatus 
+                          connected={player.isConnected} 
+                          className="text-xs py-0.5 px-2"
+                        />
+                        <span className={`text-sm px-2 py-1 rounded-full ${
+                          player.isReady 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-gray-100 text-gray-800'
+                        }`}>
+                          {player.isReady ? 'Ready' : 'Not Ready'}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -172,7 +172,6 @@ const Game: React.FC = () => {
                 {currentPlayer?.isReady ? 'Cancel Ready' : 'Ready Up'}
               </Button>
               
-              {/* Only show start button to first player (creator) */}
               {gameState.players[0]?.id === playerId && gameState.players.length >= 4 && (
                 <Button
                   onClick={handleStartGame}
@@ -380,7 +379,6 @@ const Game: React.FC = () => {
         
         <main className="flex-1 flex items-center justify-center py-20">
           <div className="container mx-auto px-6">
-            {/* Game status bar */}
             <div className="max-w-4xl mx-auto mb-8">
               <div className="flex justify-between items-center p-4 glass rounded-xl">
                 <div>
@@ -402,7 +400,6 @@ const Game: React.FC = () => {
               </div>
             </div>
             
-            {/* Connection indicator */}
             <div className="max-w-4xl mx-auto mb-4">
               <div className={`px-3 py-1 text-sm inline-flex items-center rounded-full ${
                 connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
@@ -414,7 +411,6 @@ const Game: React.FC = () => {
               </div>
             </div>
             
-            {/* Main game content */}
             <div className="max-w-4xl mx-auto">
               {renderGameContent()}
             </div>
@@ -426,4 +422,3 @@ const Game: React.FC = () => {
 };
 
 export default Game;
-
