@@ -32,3 +32,4 @@ export const ROLE_DESCRIPTIONS: Record<GameRole, string> = {
   'Chor': 'The Thief who must remain hidden to avoid being caught.',
   'Sipahi': 'The Guard who works with the Raja to identify the Chor.'
 };
+
