@@ -235,8 +235,12 @@ class MockGameServer {
     }
     
     // Start the game
-    game.status = 'assigning-roles';
-    this.state.games.set(gameId, game);
+    const updatedGame: GameState = {
+      ...game,
+      status: 'assigning-roles'
+    };
+    
+    this.state.games.set(gameId, updatedGame);
     
     // Broadcast game state
     this.broadcastGameState(gameId);
@@ -266,10 +270,10 @@ class MockGameServer {
     }));
     
     // Update game state
-    const updatedGame = {
+    const updatedGame: GameState = {
       ...game,
       players: updatedPlayers,
-      status: 'revealing-roles',
+      status: 'revealing-roles'
     };
     
     this.state.games.set(gameId, updatedGame);
@@ -287,9 +291,9 @@ class MockGameServer {
     const game = this.state.games.get(gameId);
     if (!game) return;
     
-    const updatedGame = {
+    const updatedGame: GameState = {
       ...game,
-      status: 'making-guess',
+      status: 'making-guess'
     };
     
     this.state.games.set(gameId, updatedGame);
@@ -349,7 +353,7 @@ class MockGameServer {
     }
     
     // Update game state to round-end
-    const updatedGame = {
+    const updatedGame: GameState = {
       ...game,
       players: updatedPlayers,
       status: 'round-end',
@@ -373,7 +377,7 @@ class MockGameServer {
     
     if (game.round >= game.totalRounds) {
       // This was the last round, end the game
-      const updatedGame = {
+      const updatedGame: GameState = {
         ...game,
         status: 'game-end',
       };
@@ -382,7 +386,7 @@ class MockGameServer {
       this.broadcastGameState(gameId);
     } else {
       // Reset for next round
-      const updatedGame = {
+      const updatedGame: GameState = {
         ...game,
         round: game.round + 1,
         status: 'assigning-roles',

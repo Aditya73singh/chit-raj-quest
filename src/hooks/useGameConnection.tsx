@@ -22,6 +22,7 @@ export function useGameConnection() {
   const [searchParams] = useSearchParams();
   const gameId = searchParams.get('id');
   const mockServer = useRef(MockGameServer.getInstance());
+  const connectionAttempts = useRef(0);
   const navigate = useNavigate();
   
   // Initialize player ID from local storage or generate new one
@@ -43,6 +44,9 @@ export function useGameConnection() {
     if (socket || !playerId) return; // Already connected or no player ID
 
     try {
+      connectionAttempts.current += 1;
+      console.log(`Connection attempt ${connectionAttempts.current}`);
+      
       // Use our mock server instead of a real WebSocket connection
       const ws = mockServer.current.connect(playerId, (message: string) => {
         // This is the message handler that will be called by the mock server
@@ -51,6 +55,7 @@ export function useGameConnection() {
           
           switch (parsedMessage.type) {
             case 'GAME_STATE':
+              console.log('Received game state:', parsedMessage.payload);
               setGameState(parsedMessage.payload as GameState);
               break;
             case 'ERROR':
@@ -69,8 +74,11 @@ export function useGameConnection() {
       });
       
       ws.onopen = () => {
+        console.log('Connected to game server');
         setSocket(ws);
         setConnected(true);
+        connectionAttempts.current = 0;
+        
         toast({
           title: "Connected",
           description: "Successfully connected to game server",
@@ -85,8 +93,10 @@ export function useGameConnection() {
       };
       
       ws.onclose = () => {
+        console.log('Disconnected from game server');
         setSocket(null);
         setConnected(false);
+        
         toast({
           title: "Disconnected",
           description: "Connection to game server lost",
@@ -96,6 +106,9 @@ export function useGameConnection() {
       
       ws.onerror = (error) => {
         console.error('WebSocket error:', error);
+        setSocket(null);
+        setConnected(false);
+        
         toast({
           title: "Connection Error",
           description: "Failed to connect to game server",
@@ -104,6 +117,8 @@ export function useGameConnection() {
       };
     } catch (err) {
       console.error('Failed to connect:', err);
+      setSocket(null);
+      setConnected(false);
     }
   }, [socket, playerId, gameId]);
 
@@ -111,10 +126,21 @@ export function useGameConnection() {
   useEffect(() => {
     const reconnectInterval = setInterval(() => {
       if (!connected && playerId) {
-        console.log('Attempting to reconnect...');
-        connect();
+        if (connectionAttempts.current < 5) {
+          console.log('Attempting to reconnect...');
+          connect();
+        } else {
+          console.log('Max reconnection attempts reached');
+          clearInterval(reconnectInterval);
+          
+          toast({
+            title: "Connection Failed",
+            description: "Could not connect to the game server after multiple attempts",
+            variant: "destructive"
+          });
+        }
       }
-    }, 5000); // Try to reconnect every 5 seconds
+    }, 3000); // Try to reconnect every 3 seconds
     
     return () => clearInterval(reconnectInterval);
   }, [connected, playerId, connect]);
@@ -137,6 +163,7 @@ export function useGameConnection() {
       playerId
     };
     
+    console.log('Sending message:', message);
     socket.send(JSON.stringify(message));
     return true;
   }, [socket, playerId, gameId]);
