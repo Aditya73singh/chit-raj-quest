@@ -23,6 +23,7 @@ export function useGameConnection() {
   const gameId = searchParams.get('id');
   const mockServer = useRef(MockGameServer.getInstance());
   const connectionAttempts = useRef(0);
+  const hasJoinedGame = useRef(false);
   const navigate = useNavigate();
   
   // Initialize player ID from local storage or generate new one
@@ -84,11 +85,13 @@ export function useGameConnection() {
           description: "Successfully connected to game server",
         });
         
-        // If we have a game ID in URL, join that game
-        if (gameId) {
+        // If we have a game ID in URL and haven't joined yet, join that game
+        if (gameId && !hasJoinedGame.current) {
           // Get player name from localStorage or use a default
           const playerName = localStorage.getItem('playerName') || 'Player ' + playerId.substring(7);
-          sendMessage('JOIN_GAME', { gameId, playerName });
+          console.log(`Auto-joining game ${gameId} as ${playerName}`);
+          sendMessageInternal('JOIN_GAME', { gameId, playerName }, ws);
+          hasJoinedGame.current = true;
         }
       };
       
@@ -115,17 +118,36 @@ export function useGameConnection() {
           variant: "destructive"
         });
       };
+
+      return ws;
     } catch (err) {
       console.error('Failed to connect:', err);
       setSocket(null);
       setConnected(false);
+      return null;
     }
   }, [socket, playerId, gameId]);
 
+  // Internal send message function that can be used before socket is set in state
+  const sendMessageInternal = useCallback((type: GameMessage['type'], payload: any = {}, socketToUse: WebSocket, gameIdOverride?: string) => {
+    const message: GameMessage = {
+      type,
+      payload,
+      gameId: gameIdOverride || gameId || undefined,
+      playerId
+    };
+    
+    console.log('Sending message:', message);
+    socketToUse.send(JSON.stringify(message));
+    return true;
+  }, [playerId, gameId]);
+
   // Auto-reconnect logic
   useEffect(() => {
+    let isActive = true;
+    
     const reconnectInterval = setInterval(() => {
-      if (!connected && playerId) {
+      if (!connected && playerId && isActive) {
         if (connectionAttempts.current < 5) {
           console.log('Attempting to reconnect...');
           connect();
@@ -142,7 +164,10 @@ export function useGameConnection() {
       }
     }, 3000); // Try to reconnect every 3 seconds
     
-    return () => clearInterval(reconnectInterval);
+    return () => {
+      isActive = false;
+      clearInterval(reconnectInterval);
+    };
   }, [connected, playerId, connect]);
 
   // Send message to server
@@ -173,12 +198,28 @@ export function useGameConnection() {
     // Store player name for reconnections
     localStorage.setItem('playerName', playerName);
     
-    const success = sendMessage('JOIN_GAME', { gameId, playerName });
+    let success = false;
+    if (socket) {
+      success = sendMessage('JOIN_GAME', { gameId, playerName });
+      if (success) {
+        hasJoinedGame.current = true;
+      }
+    } else {
+      // If not connected, connect first and then join
+      const ws = connect();
+      if (ws) {
+        success = sendMessageInternal('JOIN_GAME', { gameId, playerName }, ws);
+        if (success) {
+          hasJoinedGame.current = true;
+        }
+      }
+    }
+    
     if (success) {
       navigate(`/game?id=${gameId}`);
     }
     return success;
-  }, [sendMessage, navigate]);
+  }, [sendMessage, navigate, connect, sendMessageInternal]);
 
   // Create a new game room
   const createGame = useCallback((playerName: string) => {
@@ -186,12 +227,29 @@ export function useGameConnection() {
     localStorage.setItem('playerName', playerName);
     
     const gameId = `game-${Math.random().toString(36).substring(2, 9)}`;
-    const success = sendMessage('JOIN_GAME', { gameId, playerName, isCreator: true });
+    let success = false;
+    
+    if (socket) {
+      success = sendMessage('JOIN_GAME', { gameId, playerName, isCreator: true });
+      if (success) {
+        hasJoinedGame.current = true;
+      }
+    } else {
+      // If not connected, connect first and then create
+      const ws = connect();
+      if (ws) {
+        success = sendMessageInternal('JOIN_GAME', { gameId, playerName, isCreator: true }, ws);
+        if (success) {
+          hasJoinedGame.current = true;
+        }
+      }
+    }
+    
     if (success) {
       navigate(`/game?id=${gameId}`);
     }
     return success;
-  }, [sendMessage, navigate]);
+  }, [sendMessage, navigate, connect, sendMessageInternal]);
 
   // Set player ready status
   const setReady = useCallback((ready: boolean) => {
@@ -210,6 +268,11 @@ export function useGameConnection() {
     if (!gameState) return false;
     return sendMessage('START_GAME', {});
   }, [sendMessage, gameState]);
+
+  // Reset game join flag when gameId changes
+  useEffect(() => {
+    hasJoinedGame.current = false;
+  }, [gameId]);
 
   return {
     connect,
